@@ -659,7 +659,7 @@ let anf =
       CApp (APrimitive ("match_failure", 1), AConst (Parsetree.PConst_int 666), [])
     in
     let cmp a b = CApp (APrimitive ("=", 2), a, [ b ]) in
-    let rec process_cases scrut cases k =
+    (* let rec process_cases scrut cases k =
       match cases with
       | [] ->
         let fresh = gensym_id () in
@@ -705,10 +705,49 @@ let anf =
         compare_with_constant (AConst (PConst_int cinfo.constr_idx))
       | Tpat_constr (ident, args, _) -> compare_tag ident @@ match_many args
       | Tpat_tuple (p1, p2, ps) -> match_many (p1 :: p2 :: ps)
+    in *)
+    let get_info = function Typedtree.Tpat_constr (ident, _, c_info) -> Ident.String_map.find ident.hum_name c_info | _ -> failwiths "Not a constructor" in
+    let comp_constr (c1 : Typedtree.constructor_info) (c2 : Typedtree.constructor_info) = Ident.equal c1.constr_type_ident c2.constr_type_ident && c1.constr_idx = c2.constr_idx in
+    let spec c ctx = let info = get_info c in List.filter_map (fun (left, right) -> match right with 
+    Typedtree.Tpat_constr _ ->  let current_info = get_info right in if (comp_constr info current_info) then Some (left @ ) else None
+      ) ctx in
+
+    let edge_down ctx = List.map (fun (left, right) -> (left @ [List.hd right], List.tl right)) ctx in
+    let edge_up ctx = List.map (fun (left, right) -> (List.rev (List.tl (List.rev left)), [List.hd (List.rev left)] @ right)) ctx in
+    let is_var = function
+      | Typedtree.Tpat_any | Tpat_var _ -> true
+      | _ -> false
     in
+    let is_constr = function
+      | Typedtree.Tpat_constr _ -> true
+      | _ -> false
+    in
+    let get_constrs = function Typedtree.Tpat_constr (ident, _, c_info) -> 
+      let current_info = Ident.String_map.find ident.hum_name c_info in List.filter_map 
+      (fun (_, info) -> if Ident.equal info.Typedtree.constr_type_ident current_info.constr_type_ident then Some info else None) (Ident.String_map.bindings c_info) | _ -> [] in
+    let rec process_matrix scrut (matrix : (Typedtree.pattern list * expr) list) ex def ctx k =
+      match matrix with
+      | ([], expr) :: _ -> (helper expr k, [])
+      | _ when List.for_all (fun (p, _) -> is_var (List.hd p)) matrix ->
+        let fst_scrut, tl_scrut = List.hd scrut, List.tl scrut in
+        let fst_binded_matrix =
+          List.map
+            (fun (p, e) ->
+               match p with
+               | Typedtree.Tpat_var v :: tail -> tail, make_let_nonrec v fst_scrut e
+               | _ -> List.tl p, e)
+            matrix
+        in
+        process_matrix tl_scrut fst_binded_matrix ex (edge_down def) (edge_down ctx) k
+      | _ when List.exists (fun (p, _) -> is_constr (List.hd p)) matrix -> 
+        let constr = (List.find_map (fun (p, _) ->  (if is_constr (List.hd p) then Some (List.hd p) else None)) matrix) in
+        let constrs = get_constrs (Option.get constr)
+    in
+    let matrix = List.map (fun (p, e) -> [ p ], e) cases in
     let k scrut =
       let fresh = gensym_id () in
-      let wher = process_cases (AVar fresh) cases k in
+      (*TODO: ex проверить*)
+      let wher = process_matrix [ CAtom (AVar fresh) ] matrix false [] [] k in
       make_let_nonrec fresh (CAtom scrut) wher
     in
     helper scrutinee k
